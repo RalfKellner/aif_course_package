@@ -59,7 +59,13 @@ class GridworldEnvironment:
     
 
     def plot_reward_map(self, savepath = None):
-        self.plot_action_values(self.reward_dict, 'Reward Map', savepath=savepath, round = 0)
+        for s in self.Q_vals.keys():
+            for a in self.Q_vals[s].keys():
+                self.Q_vals[s][a] = self.reward_dict[s][a]
+        if savepath:
+            self.plot_action_values('Reward Map', savepath=savepath, round = 0)
+        else:
+            self.plot_action_values('Reward Map', round = 0)
 
 
     def plot_state_values(self, title, savepath = None, round = 2):
