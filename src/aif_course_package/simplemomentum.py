@@ -17,7 +17,7 @@ class SimpleMomentumEnv(gym.Env):
         self.end_date = end_date
         self.momentum_window = momentum_window
         self.initial_balance = initial_balance
-        self.state_to_meaning = {(0,0): ['no momentum', 'cash pos.'], (0,1): ['no momentum', 'stock pos.'], (1,0): ['momentum', 'cash pos.'], (1,1): ['momentum', 'stock pos.']}
+        self.state_to_meaning = {(0,0): ['neg. momentum', 'cash pos.'], (0,1): ['neg. momentum', 'stock pos.'], (1,0): ['pos. momentum', 'cash pos.'], (1,1): ['pos. momentum', 'stock pos.']}
         self.action_to_meaning = {0: 'hold pos.', 1: 'change pos.'}
         
         self.stocks_data = self._load_data()
@@ -39,7 +39,10 @@ class SimpleMomentumEnv(gym.Env):
     def reset(self):
         self.data = self.stocks_data[(self.stocks_data.ticker==self.tickers[self.current_ticker]) & (self.stocks_data.date > self.start_date) & (self.stocks_data.date < self.end_date)]
         print(f'Episode runs with ticker {self.tickers[self.current_ticker]}')
-        self.current_ticker += 1
+        if self.current_ticker == len(self.tickers) - 1:
+            self.current_ticker = 0
+        else:
+            self.current_ticker += 1
         self._prepare_features()
         self.data.reset_index(inplace = True, drop = True)
         self.feature_data.reset_index(inplace = True, drop = True)
@@ -120,3 +123,18 @@ class SimpleMomentumEnv(gym.Env):
         df = pd.read_csv(data_path)
 
         return df
+
+
+
+class SimpleMomentumAgent:
+    def __init__(self):
+        self.policy = {}
+        self.policy[1, 0] = 1
+        self.policy[1, 1] = 0
+        self.policy[0, 1] = 1
+        self.policy[0, 0] = 0
+
+    def predict(self, s):
+        return self.policy[(s[0], s[1])]
+    
+
