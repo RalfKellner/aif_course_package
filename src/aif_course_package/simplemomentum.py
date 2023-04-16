@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import random
 import os
+import pickle
 
 class SimpleMomentumEnv(gym.Env):
 
@@ -122,6 +123,10 @@ class SimpleMomentumEnv(gym.Env):
         file_path = os.path.join(this_dir, 'data', 'sp500_data', 'sp500_assetprices.pickle')
         with open(file_path, 'rb') as handle:
             df = pickle.load(handle)
+            
+        df.reset_index(inplace=True)
+        df.loc[:, 'date'] = [dt.strftime('%Y-%m-%d') for dt in df.Date]
+        df.drop('Date', axis=1, inplace=True)
 
         return df
 
