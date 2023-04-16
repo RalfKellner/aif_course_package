@@ -119,8 +119,9 @@ class SimpleMomentumEnv(gym.Env):
         This function is made for internal usage.
         '''
         this_dir, _ = os.path.split(__file__)
-        data_path = os.path.join(this_dir, 'data', 'aif_course_asset_data.csv')
-        df = pd.read_csv(data_path)
+        file_path = os.path.join(this_dir, 'data', 'sp500_data', 'sp500_assetprices.pickle')
+        with open(file_path, 'rb') as handle:
+            df = pickle.load(handle)
 
         return df
 
