@@ -131,14 +131,7 @@ class GridworldEnvironment:
         for s in self.Q_vals.keys():
             self.Q_vals[s] = {}.fromkeys(self.actions[s], 0.0)
 
-
-
-
-# an agent class which only chooses randomly among possible actions in a current state
-class RandomAgent():
-     def random_action(self, state, environment):
-            return random.choice(list(environment.actions[state].keys()))
-     
+ 
 # an epsilon_greedy agent
 class EpsilonGreedyAgent:
     def action(self, state, environment, epsilon):
@@ -147,3 +140,36 @@ class EpsilonGreedyAgent:
         else: 
             return list(environment.Q_vals[state].keys())[np.argmax(list(environment.Q_vals[state].values()))]      
 
+
+# a new policy agent class
+class PolicyAgent():
+    def __init__(self, default_preference):
+        # default preference value can be set an initialization
+        self.policy = {
+            'A1': {'down': default_preference, 'right': default_preference},
+            'A2': {'up': default_preference, 'right': default_preference},
+            'B1': {'left': default_preference, 'down': default_preference},
+            'B2': {'final': default_preference}
+        }
+
+    # general softmax function
+    def softmax(self, state):
+      z = np.array(list(self.policy[state].values()))
+      return np.exp(z) / np.sum(np.exp(z))
+
+    # get probability for specific state and action
+    def get_grad(self, state, action):
+      return 1 - self.softmax(state)[list(self.policy[state].keys()).index(action)]
+
+    # get the probability in
+    # a method for choosing an action   
+    def action(self, state):
+        # given a state, determine action probability distribution
+        probs = self.softmax(state)
+        # randomly draw an action from the probability distribution, gives an one-hot encoded array, e.g., [0, 1, 0] for action number two
+        prob_move = np.random.multinomial(n = 1, pvals = probs)
+        # get the index for the action to choose
+        move_idx = np.where(prob_move == 1)[0][0]
+        # choose the actual action for the action index
+        move = list(self.policy[state].keys())[move_idx]
+        return move

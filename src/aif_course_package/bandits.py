@@ -1,7 +1,8 @@
-import numpy as np
 import random
 import operator
-import matplotlib.pylab as plt
+import numpy as np
+import matplotlib.pyplot as plt
+
 
 #general bandit defined by win probability and a pull method giving a reward of -1 or 2
 class Bandit():
@@ -15,77 +16,95 @@ class Bandit():
             return -1.0
         
 # a class for a multi-armed bandit with n bandits
-class MultiBandit():
+class MultiArmedBandit():
 
-  # a function which initializes an instance of Mulitbandit
-  def __init__(self, winning_probs):
-    # set the user specified winning probabilities and empty dictionaries for bandits, rewards and q-values
-    self.winning_probs = winning_probs
-    self.bandits = {}
-    self.rewards = {}
-    self.q_values = {}
+    # a function which initializes an instance of Mulitbandit
+    def __init__(self, winning_probabilities):
+        # set the user specified winning probabilities and empty dictionaries for bandits, rewards and q-values
+        self.winning_probabilities = winning_probabilities
+        self.bandits = {}
+        # define each bandit instance 
+        for i, prob in enumerate(self.winning_probabilities): 
+            self.bandits[f'bandit_{i + 1}'] = Bandit(prob)
 
-    # define each bandit instance and a rewards and q-value memory for it
-    for i, prob in enumerate(self.winning_probs): 
-      self.bandits[f'bandit_{i + 1}'] = Bandit(prob)
-      self.rewards[f'bandit_{i + 1}'] = []
-      self.q_values[f'bandit_{i + 1}'] = 0.0
+    def step(self, action):
+        # pull the bandit with the specified action
+        reward = self.bandits[action].pull()
+        # update the reward and q-value memory
+        return reward
 
-  # an epsilon greedy function for choosing the bandit
-  def epsilon_greedy(self, epsilon):
-    # the bandit is either chosen randomly
-    if np.random.uniform(size = 1)[0] <= epsilon:
-        return random.choice(list(self.bandits.keys()))
-    # or by the highest q-value
-    else:
-        return max(self.q_values.items(), key=operator.itemgetter(1))[0]
 
-  # a function for playing n times at all slot machines and examining the progress of q-values over time
-  def simulate(self, n, eps, eps_decay, savefig = None):
+class BanditValueAgent:
+    def __init__(self, environment):
+        self.num_bandits = len(environment.winning_probabilities)
+        self.rewards = {}
+        self.q_values = {}
+        # define a memory for each bandit 
+        for i, prob in enumerate(range(self.num_bandits)): 
+            self.rewards[f'bandit_{i + 1}'] = []
+            self.q_values[f'bandit_{i + 1}'] = 0.0
 
-    # for each simulation we memorize the q-values estimates over time to visualize them after we are done
-    q_estimates_over_t = {}
-    for key in self.bandits.keys():
-      q_estimates_over_t[key] = []
-    xticks = []
 
-    # now in a loop of n, select the bandit according to epsilon-greedy, memorize the reward for this bandit and 
-    # calculate the current q-value estimate for this bandit
-    print('-'*100)
-    print(f'Epsilon at start: {eps:.4f}')
-    for t in range(n):
-      bandit_t = self.epsilon_greedy(eps)
-      self.rewards[bandit_t].append(self.bandits[bandit_t].pull())
-      self.q_values[bandit_t] = np.mean(self.rewards[bandit_t])
+      # an epsilon greedy function for choosing the bandit
+    def epsilon_greedy(self, epsilon):
+        # the bandit is either chosen randomly
+        if np.random.uniform(size = 1)[0] <= epsilon:
+            return random.choice(list(self.rewards.keys()))
+        # or by the highest q-value
+        else:
+            return max(self.q_values.items(), key=operator.itemgetter(1))[0]
+        
 
-      # save some information over time for plotting
-      if (t % 10) == 0:
-        xticks.append(t)
-        for key in self.bandits.keys():
-          q_estimates_over_t[key].append(self.q_values[key])
+    def update(self, action, reward, stationary, **kwargs):
+        # update the reward memory
+        self.rewards[action].append(reward)
+        # update the q-value memory
+        if stationary:
+            self.q_values[action] +=  kwargs['eta'] * (r - self.q_values[a])
+        else:
+            self.q_values[action] =  np.mean(self.rewards[action])
 
-        eps *= eps_decay
-
-    print(f'Epsilon at the end: {eps:.4f}')
-    print('-'*100)
-    print('')
-    # visualize, set figure size a little larger than standard
-    plt.figure(figsize =(8, 4))
-
-    #print the evolution of estimated q values
-    for i, key in enumerate(self.bandits.keys()):
-      plt.plot(xticks, q_estimates_over_t[key], label = key)
     
-    plt.ylim(-1,2)
-    plt.legend(ncol = len(self.bandits.keys()))
-    plt.xlabel('games played')
-    plt.ylabel(r'$\hat{Q}(a_0|s_0)$')
-    if savefig:
-       plt.savefig(savefig)
-    plt.show()
+    def print_qvalues(self):
+        for bandit in self.q_values.keys():
+            print(f'Bandit {bandit} has a q-value of {self.q_values[bandit]:.4f}, it has been played {len(self.rewards[bandit])} times')
 
-    print('')
-    print('-'*100)
-    for i, key in enumerate(self.bandits.keys()):
-      print(f"Bandit {i+1} has been played {len(self.rewards[key])} times")
-    print('-'*100)
+    
+    def get_current_estimates(self):
+        return  list(self.q_values.values())  
+
+
+class BanditPolicyAgent():
+    def __init__(self, environment):
+        # an array representing action preferences
+        self.policy = {}
+        # define each bandit instance 
+        for i, _ in enumerate(environment.winning_probabilities): 
+            self.policy[f'bandit_{i + 1}'] = 1.0
+        self.action2idx = {}
+        for i, key in enumerate(self.policy.keys()):
+            self.action2idx[key] = i
+
+    # the softmax function which turns the policy into action probabilities
+    def softmax(self):
+      preferences = np.array(list(self.policy.values()))
+      return np.exp(preferences) /np.sum(np.exp(preferences))
+
+    # randomly select an action, given action probabilities, basically, this is a random draw from a Multinoulli distribution  
+    def act(self, deterministic = False):
+        if deterministic == True:
+          idx = np.argmax(self.softmax())
+        else:
+          idx =  list(np.random.multinomial(n = 1, pvals = self.softmax())).index(1)
+        return list(self.policy.keys())[idx]
+
+    # as explained above, the derivative for the log of the action probability with respect to its preference
+    def action_grad(self, action):
+      return 1 - self.softmax()[self.action2idx[action]]
+    
+    # updating rule given a reward and an acion
+    def update(self, reward, action, eta):
+        self.policy[action] += eta * reward * self.action_grad(action)
+
+    def get_current_probabilities(self):
+        return  list(self.softmax())
