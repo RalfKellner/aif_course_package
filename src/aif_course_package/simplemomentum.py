@@ -120,13 +120,9 @@ class SimpleMomentumEnv(gym.Env):
         This function is made for internal usage.
         '''
         this_dir, _ = os.path.split(__file__)
-        file_path = os.path.join(this_dir, 'data', 'sp500_data', 'sp500_assetprices.pickle')
+        file_path = os.path.join(this_dir, 'data', 'sp500_data', 'sp500_prices_2018_2023.pickle')
         with open(file_path, 'rb') as handle:
             df = pickle.load(handle)
-            
-        df.reset_index(inplace=True)
-        df.loc[:, 'date'] = [dt.strftime('%Y-%m-%d') for dt in df.Date]
-        df.drop('Date', axis=1, inplace=True)
 
         return df
 
