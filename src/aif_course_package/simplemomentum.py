@@ -4,6 +4,7 @@ import numpy as np
 import random
 import os
 import pickle
+from .utils import read_pickle
 
 class SimpleMomentumEnv(gym.Env):
 
@@ -12,7 +13,7 @@ class SimpleMomentumEnv(gym.Env):
         if tickers and n_companies:
             print('Please either provide a list of tickers or the number of companies to be selected randomly. If both are provided, the ticker list is prioritized.')
         if not(tickers) and not(n_companies):
-            raise ValueError('Please either provide a list of tickers or the number of companies to be selected randomly.')
+            print('All available companies are going to be used. If you desire to use less companies provide n_companies or tickers.')
 
         self.start_date = start_date
         self.end_date = end_date
@@ -22,6 +23,7 @@ class SimpleMomentumEnv(gym.Env):
         self.action_to_meaning = {0: 'hold pos.', 1: 'change pos.'}
         
         self.stocks_data = self._load_data()
+        self.stocks_data = self.stocks_data.reset_index().rename(columns = {'index': 'date'})
         self.stocks_data_in_time = self.stocks_data[(self.stocks_data.date > self.start_date) & (self.stocks_data.date < self.end_date)]
         self.all_tickers = self.stocks_data_in_time.ticker.unique().tolist()
         if tickers:
@@ -29,8 +31,10 @@ class SimpleMomentumEnv(gym.Env):
             not_in_stocks_data = [ticker for ticker in tickers if ticker not in self.all_tickers]
             if len(not_in_stocks_data) > 0:
                 print(f'The following tickers are not in the stocks data and will not be used: {not_in_stocks_data}')
-        else:
+        elif n_companies:
             self.tickers = random.sample(self.all_tickers, k=n_companies)
+        else:
+            self.tickers = self.all_tickers
         self.current_ticker = 0
 
         self.action_space = gym.spaces.Discrete(2)
@@ -50,13 +54,13 @@ class SimpleMomentumEnv(gym.Env):
         self.current_step = 0
         self.balance = self.initial_balance
         self.shares_held = 0
-        self.shares_buy_and_hold = self.balance / self.data['close'][0]
+        self.shares_buy_and_hold = self.balance / self.data['Close'][0]
         return self._next_observation()
         
 
     def step(self, action):        
         
-        previous_value = self.balance + self.shares_held * self.data['close'][self.current_step]
+        previous_value = self.balance + self.shares_held * self.data['Close'][self.current_step]
         starting_balance = self.balance
         starting_shares = self.shares_held
 
@@ -70,9 +74,9 @@ class SimpleMomentumEnv(gym.Env):
         else:
             pass
 
-        current_value = self.balance + self.shares_held * self.data['close'][self.current_step]
+        current_value = self.balance + self.shares_held * self.data['Close'][self.current_step]
         reward = np.log(current_value) - np.log(previous_value) 
-        reward_buy_and_hold = np.log(self.shares_buy_and_hold * self.data['close'][self.current_step]) - np.log(self.shares_buy_and_hold * self.data['close'][self.current_step-1])
+        reward_buy_and_hold = np.log(self.shares_buy_and_hold * self.data['Close'][self.current_step]) - np.log(self.shares_buy_and_hold * self.data['Close'][self.current_step-1])
         done = self.current_step == len(self.data) - 1
         obs = self._next_observation()
         additional_info = pd.concat((self.data.iloc[self.current_step-1].to_frame('t'), self.data.iloc[self.current_step].to_frame('t+1')), axis = 1)
@@ -85,17 +89,35 @@ class SimpleMomentumEnv(gym.Env):
 
 
     def render(self, mode = 'human'):
-        print(f'Current step: {self.current_step}, current value: {self.balance + self.shares_held*self.data["close"][self.current_step]}')            
+        print(f'Current step: {self.current_step}, current value: {self.balance + self.shares_held*self.data["Close"][self.current_step]}')            
     
 
+    def play_with_ticker(self, ticker):
+        assert ticker in self.tickers, 'Ticker is not in the data set, use the print_available_tickers method to get a list of available tickers.'
+        self.data = self.stocks_data[(self.stocks_data.ticker==ticker) & (self.stocks_data.date > self.start_date) & (self.stocks_data.date < self.end_date)]
+        print(f'Episode runs with ticker {ticker}')
+        self._prepare_features()
+        self.data.reset_index(inplace = True, drop = True)
+        self.feature_data.reset_index(inplace = True, drop = True)
+        self.current_step = 0
+        self.balance = self.initial_balance
+        self.shares_held = 0
+        self.shares_buy_and_hold = self.balance / self.data['Close'][0]
+        return self._next_observation()
+
+
+    def print_available_tickers(self):
+        return self.tickers
+
+
     def _prepare_features(self):
-        self.feature_data = self.data.loc[:, 'close'].diff(self.momentum_window).dropna().apply(lambda x: 1 if x > 0 else 0).to_frame('momentum')
+        self.feature_data = self.data.loc[:, 'Close'].diff(self.momentum_window).dropna().apply(lambda x: 1 if x > 0 else 0).to_frame('momentum')
         self.data = self.data.iloc[self.momentum_window:]
 
 
     def _buy_stock(self):
         # buy all shares
-        share_price = self.data['open'][self.current_step]
+        share_price = self.data['Open'][self.current_step]
         stocks_to_buy = self.balance / share_price
         self.shares_held += stocks_to_buy
         self.balance -= stocks_to_buy * share_price
@@ -103,7 +125,7 @@ class SimpleMomentumEnv(gym.Env):
 
     def _sell_stock(self):
         # sell all shares
-        share_price = self.data['open'][self.current_step]
+        share_price = self.data['Open'][self.current_step]
         self.balance += self.shares_held * share_price
         self.shares_held = 0
     
@@ -113,19 +135,19 @@ class SimpleMomentumEnv(gym.Env):
         hold_pos = 1 if self.shares_held > 0 else 0
         obs = [self.feature_data.iloc[self.current_step]['momentum'], hold_pos]
         return obs
-    
+
+
     @staticmethod
     def _load_data():
         '''
         This function is made for internal usage.
         '''
         this_dir, _ = os.path.split(__file__)
-        file_path = os.path.join(this_dir, 'data', 'sp500_data', 'sp500_prices_2018_2023.pickle')
+        file_path = os.path.join(this_dir, 'data', 'yfinance_data.pickle')
         with open(file_path, 'rb') as handle:
             df = pickle.load(handle)
 
         return df
-
 
 
 class SimpleMomentumAgent:
