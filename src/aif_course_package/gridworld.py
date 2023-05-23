@@ -26,7 +26,7 @@ class GridWorldPlot:
 
         self.rewards = dict()
         self.rewards[1, 1] = {0: -1, 1: -1, 2: -1, 3: -1}
-        self.rewards[1, 2] = {0: -1, 1: -1, 2:  5, 3: -1}
+        self.rewards[1, 2] = {0: -1, 1: -1, 2:  -1, 3: 5}
         self.rewards[2, 1] = {0: -1, 1: -1, 2: -1, 3: -1}
 
 
