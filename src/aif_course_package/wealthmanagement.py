@@ -33,7 +33,7 @@ class WealthManager:
     def prepare_data(self, log_return_series):
         m, s = self.scaler_values
         X = log_return_series.to_frame('logr_t')
-        for lag in range(1, self.lags+1):
+        for lag in range(1, self.lags+1):  
             X.loc[:, f'logr_t_{lag}'] = X['logr_t'].shift(lag)
         colnames = X.columns.tolist()
         colnames.reverse()

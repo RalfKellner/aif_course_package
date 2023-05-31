@@ -421,3 +421,35 @@ class DQNAgent:
                 Q_values[tuple(s)][a] = np.round(val, 2)
         
         return Q_values
+    
+class ReinforceAgent:
+    
+    def __init__(self, environment, hidden_neurons, activation):
+        self.action_space = environment.action_space
+        self.observation_space = environment.observation_space
+        self.policy = self.make_policy(hidden_neurons, activation)
+        self.state_action_probs = dict.fromkeys(environment.action2states, 0)
+        for key in self.state_action_probs.keys():
+            self.state_action_probs[key] = dict.fromkeys(environment.action2states[key], 0)
+
+
+    def make_policy(self, hidden_neurons, activation):
+        policy = tf.keras.Sequential([
+            tf.keras.layers.InputLayer(input_shape = (len(self.observation_space), )),
+            tf.keras.layers.Dense(hidden_neurons, activation = activation),
+            tf.keras.layers.Dense(self.action_space.n, activation='softmax')
+        ])
+        return policy
+    
+    
+    def action(self, state):
+        s_tensor = tf.expand_dims(tf.convert_to_tensor(state), 0)
+        probs = self.policy(s_tensor)
+        action = np.random.choice(self.action_space.n, p = np.squeeze(probs))
+        return action
+    
+    def get_current_policy(self):
+        for state in self.state_action_probs.keys():
+            for i, prob in enumerate(self.policy(tf.expand_dims(tf.convert_to_tensor(np.array(state)), 0)).numpy().flatten()):
+                self.state_action_probs[state][i] = prob
+        return self.state_action_probs
