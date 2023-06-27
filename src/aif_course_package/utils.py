@@ -8,6 +8,8 @@ import os
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
+import tensorflow as tf
+from scipy.stats import mode
 
 
 def get_ff_factors(num_factors = 3 , frequency = 'daily', in_percentages = False):
@@ -171,7 +173,10 @@ def load_course_data(name):
     if name == 'yfinance':
         path_name = os.path.join(this_dir, 'data', 'yfinance_data.pickle')
     df = read_pickle(path_name)
-    return df
+    df_spy = pd.read_csv(os.path.join(this_dir, 'data', 'spy_data.csv'))
+    df_spy.rename(columns = {'Unnamed: 0': 'Date'}, inplace = True)
+    df_spy.set_index('Date', drop = True, inplace = True)
+    return df, df_spy
 
 
 class SaveOnBestTrainingRewardCallback(BaseCallback):
@@ -220,3 +225,83 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
                     self.model.save(self.save_path + '/best_agent')
 
         return True
+    
+
+
+# a function for feature analysis
+def feature_analysis(X, nn, feature_names):
+    # determine first and second partial derivatives
+    with tf.GradientTape() as snd:
+        snd.watch(X)
+        with tf.GradientTape() as fst:
+            fst.watch(X)
+            # prediction with the neural network, i.e., f(X)
+            pred = nn(X)
+        # gradient
+        g = fst.gradient(pred, X)
+    # jacobian which outputs Hessian matrix
+    h = snd.batch_jacobian(g, X)
+
+    # first partial derivatives
+    g_np = g.numpy()
+    # average squard partial derivatives
+    g_mag_sq = (g_np**2).mean(axis = 0)
+    # square root of average squard partial derivatives
+    g_mag = np.sqrt(g_mag_sq)
+    # sign of average partial derivatives
+    g_dir = np.sign(g_np.mean(axis = 0))
+
+    # normalizing constant
+    C_ = np.sum(g_mag)
+    # normalized feature importance with sign
+    fi = (g_mag * g_dir) / C_
+
+    # get signs of each sample
+    fi_signs = np.sign(g_np)
+    # the mode is the sign which can be observed most often among all samples, the counts is how often this sign is observed
+    fi_modes, fi_counts = mode(fi_signs, keepdims = True)
+    # dividing the count of the sign which is observed most often by the overall sample size gives us a frequency measure
+    # which is closer to one, the higher the conformity of the sign
+    fi_conformity = fi_counts / g_np.shape[0] #fi_modes * 
+
+    # in analogy to the calculation above, we do the same thing with the second partial derivatives
+    h_np = h.numpy()
+    # get the square root of average squared direction of curvature and interactions
+    h_mag_sq = (h_np**2).mean(axis = 0)
+    h_mag = np.sqrt(h_mag_sq)
+
+    # the the sign of average curvature and interactions
+    h_dir = np.sign(h_np.mean(axis = 0))
+
+    # normalize the values on the diagonal line to compare the degree of non-linearity
+    C_nonlin = np.sum(h_mag.diagonal())
+    nonlinearity = (h_dir.diagonal() * h_mag.diagonal()) / C_nonlin
+
+    # normlize the interactions
+    lti = np.tril_indices(h_mag.shape[0], k = -1)
+    C_ia = np.sum(h_mag[lti])
+    interactions = (h_mag[lti] * h_dir[lti]) / C_ia
+
+    # bring curvature and interaction effects back to matrix format
+    snd_degree_summary = np.diag(nonlinearity)
+    a, b = lti
+    inter_iter = iter(interactions)
+    for i, j in zip(a, b):
+        snd_degree_summary[i, j] = next(inter_iter)
+        snd_degree_summary[j, i] = snd_degree_summary[i, j]
+
+    # get the conformity of second order effects
+    snd_signs = np.sign(h_np)
+    snd_degree_modes, snd_degreee_counts = mode(snd_signs, keepdims = True)
+    snd_degree_conformity = snd_degreee_counts / h_np.shape[0] #snd_degree_modes * 
+
+    # finally summarize feature importances and second order effects
+    summary = pd.DataFrame(data = snd_degree_summary, index = feature_names, columns = feature_names)
+    summary.loc[:, 'feature_importance'] = fi
+    # as well as their conformity
+    summary_conformity = pd.DataFrame(data = snd_degree_conformity.reshape(h_np.shape[1], h_np.shape[2]), index = feature_names, columns = feature_names)
+    summary_conformity.loc[:, 'feature_conformity'] = fi_conformity.flatten()
+
+    return summary, summary_conformity
+
+
