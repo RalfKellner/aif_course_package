@@ -5,12 +5,11 @@ import io
 import re
 import pickle
 import os
-from stable_baselines3.common.results_plotter import load_results, ts2xy
-from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
 import tensorflow as tf
 from scipy.stats import mode
-
+import matplotlib.pylab as plt
+from matplotlib import cm
 
 def get_ff_factors(num_factors = 3 , frequency = 'daily', in_percentages = False):
 
@@ -179,55 +178,6 @@ def load_course_data(name):
     return df, df_spy
 
 
-class SaveOnBestTrainingRewardCallback(BaseCallback):
-    """
-    Callback for saving a model (the check is done every ``check_freq`` steps)
-    based on the training reward (in practice, we recommend using ``EvalCallback``).
-
-    :param check_freq: (int)
-    :param log_dir: (str) Path to the folder where the model will be saved.
-      It must contains the file created by the ``Monitor`` wrapper.
-    :param verbose: (int)
-    """
-
-    def __init__(self, check_freq: int, log_dir: str, verbose=1):
-        super().__init__(verbose)
-        self.check_freq = check_freq
-        self.log_dir = log_dir
-        self.save_path = os.path.join(log_dir)
-        self.best_mean_reward = -np.inf
-
-    def _init_callback(self) -> None:
-        # Create folder if needed
-        if self.save_path is not None:
-            os.makedirs(self.save_path, exist_ok=True)
-
-    def _on_step(self) -> bool:
-        if self.n_calls % self.check_freq == 0:
-
-            # Retrieve training reward
-            x, y = ts2xy(load_results(self.log_dir), "timesteps")
-            if len(x) > 0:
-                # Mean training reward over the last 100 episodes
-                mean_reward = np.mean(y[-100:])
-                if self.verbose > 0:
-                    print(f"Num timesteps: {self.num_timesteps}")
-                    print(
-                        f"Best mean reward: {self.best_mean_reward:.2f} - Last mean reward per episode: {mean_reward:.2f}"
-                    )
-
-                # New best model, you could save the agent here
-                if mean_reward > self.best_mean_reward:
-                    self.best_mean_reward = mean_reward
-                    # Example for saving best model
-                    if self.verbose > 0:
-                        print(f"Saving new best model to {self.save_path}.zip")
-                    self.model.save(self.save_path + '/best_agent')
-
-        return True
-    
-
-
 # a function for feature analysis
 def feature_analysis(X, nn, feature_names):
     # determine first and second partial derivatives
@@ -305,3 +255,46 @@ def feature_analysis(X, nn, feature_names):
     return summary, summary_conformity
 
 
+def plot_weights_over_time(optimal_weights, width = 6, height = 4, ax = None, legend = False):
+
+    x = optimal_weights.index
+    labels = optimal_weights.columns
+
+    if not isinstance(optimal_weights, pd.DataFrame):
+        raise ValueError("w must be a DataFrame")
+
+    if ax is None:
+        fig = plt.gcf()
+        ax = fig.gca()
+        fig.set_figwidth(width)
+        fig.set_figheight(height)
+    else:
+        fig = ax.get_figure()
+
+    ax.set_title('Optimal portfolio weights over time')
+
+    cmap = 'tab20'
+    colormap = cm.get_cmap(cmap)
+    colormap = colormap(np.linspace(0, 1, 20))
+    nrow = 25
+
+    weights = []
+    for col in labels:
+        weights.append(optimal_weights.loc[:, col].astype(np.float32).values)
+    y = np.vstack(weights)
+
+    n = int(np.ceil(len(labels) / nrow))
+    ax.stackplot(x, y, labels=labels, alpha=0.7, edgecolor="black")
+    if legend:
+        ax.legend(labels, loc="center left", bbox_to_anchor=(1, 0.5), ncol=n)
+    
+    for label in ax.get_xticklabels():
+        label.set_rotation(45)
+        label.set_ha('right')
+
+    try:
+        fig.tight_layout()
+    except:
+        pass
+
+    return ax

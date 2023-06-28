@@ -1,4 +1,4 @@
-from .utils import load_course_data, feature_analysis
+from .utils import load_course_data, feature_analysis, plot_weights_over_time
 import yfinance as yf
 import tensorflow as tf
 import pandas as pd
@@ -10,6 +10,7 @@ from arch.univariate import ARX
 from arch.univariate import GARCH
 from arch.univariate import SkewStudent
 import os
+
 
 
 class CourseDataManager:
@@ -228,7 +229,7 @@ class RecurrentWealthManager:
         self.data['original'] = self.data['original'].dropna()
 
         self.output_activation = output_activation
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=optimizer_lr)
+        self.optimizer_lr = optimizer_lr
 
         assert performance_benchmark in ['buy_and_hold', 'none'], 'Please select buy_and_hold or None as a performance benchmark'
         self.performance_benchmark = performance_benchmark
@@ -470,6 +471,9 @@ class RecurrentWealthManager:
         -----------
 
         '''
+
+        self.optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=self.optimizer_lr)
+
 
         if reset_weights:
             self.init_agent(self.init_agent_weights)
@@ -723,14 +727,36 @@ class RecurrentWealthManager:
 
 
 class DynamicPortfolioManager:
-    def __init__(self, course_data_manager, pf_tickers, optimizer, train_start, train_end, test_start, test_end, rolling_window = 20, transaction_costs = 0.001, non_uniform_weight_penalty = 0.001):
+    def __init__(self, course_data_manager, pf_tickers, optimizer_lr, start_train, end_train, start_test, end_test, rolling_window = 20, transaction_costs = 0.001, non_uniform_weight_penalty = 0.01):
+    
+        '''
+        This class intializes a numerical dynamic portfolio optimization agent
+
+        Parameter:
+        ------------
+        course_data_manager: CourseDataManager instance handling course data
+        pf_tickers: a list of strings with stock symbols
+        optimizer_lr: float, a learning rate which is used for the Adam optimizer when making the gradient update
+        start_train: str in %Y-%m-%d format, e.g., 2020-01-01
+        end_train: str in %Y-%m-%d format, e.g., 2020-01-01
+        start_test: str in %Y-%m-%d format, e.g., 2020-01-01
+        end_est: str in %Y-%m-%d format, e.g., 2020-01-01
+        rolling_window: int determining the number of past days to calculate the rolling means, standard deviations and correlations
+        transaction_costs: float which is multiplied by the sum of absolute stock position changes to determine overall transaction costs
+        non_uniform_weight_penalty: float which can be used to prevent the agent from extreme positions in single stocks
+
+        Returns:
+        ----------
+        
+        '''
+    
         self.pf_tickers = pf_tickers
-        self.optimizer = optimizer
+        self.optimizer_lr = optimizer_lr
         self.n_companies = len(self.pf_tickers)
-        self.train_start = pd.to_datetime(train_start)
-        self.train_end = pd.to_datetime(train_end)
-        self.test_start = pd.to_datetime(test_start)
-        self.test_end = pd.to_datetime(test_end)
+        self.train_start = pd.to_datetime(start_train)
+        self.train_end = pd.to_datetime(end_train)
+        self.test_start = pd.to_datetime(start_test)
+        self.test_end = pd.to_datetime(end_test)
         self.rolling_window = rolling_window
         self.transaction_costs = transaction_costs
         self.non_uniform_weight_penalty = non_uniform_weight_penalty
@@ -742,6 +768,12 @@ class DynamicPortfolioManager:
 
     def prepare_train_test_data(self):
 
+        '''
+        This function is used internally to prepare feature and target data. It calculates rolling means, standard deviations and correlations
+        to determine feature variables. These features are standardized using mean-std standarizdation.
+        
+        '''
+
         roll_mu = self.df_returns.rolling(self.rolling_window).mean()
         roll_mu.columns = [f'mu_{ticker}' for ticker in self.pf_tickers]
         roll_std = self.df_returns.rolling(self.rolling_window).std()
@@ -750,7 +782,7 @@ class DynamicPortfolioManager:
         cols = []
         i_idx, j_idx = np.tril_indices(n = self.n_companies, k = -1)
         for i, j in zip(i_idx, j_idx):
-            cols.append(f'rho_{self.pf_tickers[i]}-{self.pf_tickers[i]}')
+            cols.append(f'rho_{self.pf_tickers[i]}-{self.pf_tickers[j]}')
         roll_corr_t = pd.DataFrame(columns = cols)
         for dt in roll_corr.index.get_level_values(0).unique():
             roll_corr_t.loc[dt] = roll_corr.loc[(dt, self.pf_tickers), :].values[np.tril_indices(n = self.n_companies, k = -1)]
@@ -783,6 +815,10 @@ class DynamicPortfolioManager:
 
 
     def init_agent(self):
+        '''
+        This function initializes weights for the agent.
+
+        '''
         self.agent = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape = (self.X_train.shape[0], self.X_train.shape[1])),
             tf.keras.layers.SimpleRNN(self.n_companies, activation = 'softmax', return_sequences=True, kernel_initializer=tf.keras.initializers.Constant(value = 0.1), recurrent_initializer=tf.keras.initializers.Constant(value = 0.1))
@@ -796,7 +832,13 @@ class DynamicPortfolioManager:
         self.agent_test.set_weights(self.agent.get_weights())
 
 
-    def get_gradients(self):
+    def get_gradients(self, mean_only = False):
+        ''''
+        This function determines the gradient for the average mean to standard deviation loss w.r.t. the agent's parameters.
+        Furthermore, it adds a penalty in the denominator which is higher, the more extreme single stock positions are and the higher
+        the non_uniform_weight_penalty variable is set.
+        
+        '''
         naive_holdings = tf.convert_to_tensor(np.array(([1 / self.n_companies] * self.X_train.shape[0] * self.n_companies)).reshape(self.X_train.shape[0] , self.n_companies), dtype = 'float')
         with tf.GradientTape() as tape:
             tape.watch(self.agent.trainable_variables)
@@ -805,10 +847,13 @@ class DynamicPortfolioManager:
             pf_returns = tf.reduce_sum(tf.multiply(holdings, self.Y_train_tensor), axis = 1)
             holdings_shifted = tf.concat([holdings[1:], tf.expand_dims(tf.zeros(self.n_companies), 0)], axis = 0)
             abs_pos_change = tf.reduce_sum(tf.abs(tf.subtract(holdings_shifted, holdings)), axis = 1)
-            delta_to_naive = tf.reduce_sum(tf.abs(tf.subtract(holdings, naive_holdings)))
+            delta_to_naive = tf.reduce_mean(tf.abs(tf.subtract(holdings, naive_holdings)))
 
             returns = (1 + pf_returns) * (1 - abs_pos_change * self.transaction_costs) - 1
-            loss = -tf.divide(tf.reduce_mean(returns), tf.math.reduce_std(returns) + self.non_uniform_weight_penalty * delta_to_naive)
+            if mean_only:
+                loss = -tf.reduce_mean(returns) + self.non_uniform_weight_penalty * delta_to_naive
+            else:
+                loss = -tf.divide(tf.reduce_mean(returns), tf.math.reduce_std(returns) + self.non_uniform_weight_penalty * delta_to_naive) 
         
         grads = tape.gradient(loss, self.agent.trainable_variables)
         return grads, loss.numpy().flatten()[0]
@@ -818,12 +863,20 @@ class DynamicPortfolioManager:
         self.optimizer.apply_gradients(zip(gradients, self.agent.trainable_variables))    
 
 
-    def learn(self, epochs, reset_weights = True):
+    def learn(self, epochs, reset_weights = True, mean_only = False):
+
+        ''''
+        
+        This function iteratively determines the training loss, the gradients and uses the Adam optimizer to update parameters based on gradient information.
+
+        '''
+
+        self.optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=self.optimizer_lr)
         if reset_weights:
             self.init_agent()
         losses = []
         for e in range(epochs):
-            grads, loss = self.get_gradients()
+            grads, loss = self.get_gradients(mean_only = mean_only)
             self.update_weights(grads)
             losses.append(loss)
             if e%20 == 0:
@@ -834,24 +887,36 @@ class DynamicPortfolioManager:
     
 
     def get_holdings_and_returns(self):
+        '''
+        
+        Get the holdings during time for every stock.
+
+
+        '''
         holdings_train = self.agent(self.X_train_tensor).numpy()
         holdings_train = holdings_train.reshape(self.X_train.shape[0], self.n_companies)
         holdings_shifted_train = np.concatenate([holdings_train[1:], np.zeros(self.n_companies).reshape(1, -1)], axis = 0)
         abs_pos_change_train = np.sum(np.abs(holdings_shifted_train - holdings_train), axis = 1)
-        pf_returns_train = (holdings_train * self.Y_train).mean(axis = 1)
+        pf_returns_train = (holdings_train * self.Y_train).sum(axis = 1)
         returns_train = (1 + pf_returns_train) * (1 - abs_pos_change_train * self.transaction_costs) - 1
 
         holdings_test = self.agent_test(self.X_test_tensor).numpy()
         holdings_test = holdings_test.reshape(self.X_test.shape[0], self.n_companies)
         holdings_shifted_test = np.concatenate([holdings_test[1:], np.zeros(self.n_companies).reshape(1, -1)], axis = 0)
         abs_pos_change_test = np.sum(np.abs(holdings_shifted_test - holdings_test), axis = 1)
-        pf_returns_test = (holdings_test * self.Y_test).mean(axis = 1)
+        pf_returns_test = (holdings_test * self.Y_test).sum(axis = 1)
         returns_test = (1 + pf_returns_test) * (1 - abs_pos_change_test * self.transaction_costs) - 1
 
         return holdings_train, holdings_test, returns_train, returns_test
 
 
     def get_performance(self):
+
+        '''
+        
+        Get performance for training and test data.
+        
+        '''
 
         holdings_train, holdings_test, returns_train, returns_test = self.get_holdings_and_returns()
         
@@ -881,6 +946,11 @@ class DynamicPortfolioManager:
 
 
     def plot_performance(self):
+        '''
+        
+        Visualize performance for training and test data.
+        
+        '''
         holdings_train, holdings_test, returns_train, returns_test = self.get_holdings_and_returns()
         naive_returns_train = self.Y_train.mean(axis = 1)
         naive_returns_test = self.Y_test.mean(axis = 1)
@@ -888,25 +958,35 @@ class DynamicPortfolioManager:
         pf_all_train = pd.concat((self.Y_train.add(1.).cumprod(), returns_train.to_frame('portfolio').add(1.).cumprod(), naive_returns_train.add(1.).cumprod().to_frame('naive')), axis = 1)
         pf_all_test = pd.concat((self.Y_test.add(1.).cumprod(), returns_test.to_frame('portfolio').add(1.).cumprod(), naive_returns_test.add(1.).cumprod().to_frame('naive')), axis = 1)
 
+        holdings_train_df = pd.DataFrame(data = holdings_train, columns = self.pf_tickers, index = self.X_train.index)
+        holdings_test_df = pd.DataFrame(data = holdings_test, columns = self.pf_tickers, index = self.X_test.index)
+
 
         fig, axs = plt.subplots(2, 2, figsize = (12, 8))
-        pd.DataFrame(holdings_train, columns = self.pf_tickers, index = self.X_train.index).plot(ax = axs[0, 0], title = 'Potfolio holdings')
+        plot_weights_over_time(holdings_train_df, legend = True, ax = axs[0, 0])
+        #pd.DataFrame(holdings_train, columns = self.pf_tickers, index = self.X_train.index).plot(ax = axs[0, 0], title = 'Potfolio holdings')
         pf_all_train.plot(ax = axs[0, 1], title = 'Wealth development')
-        pd.DataFrame(holdings_test, columns = self.pf_tickers, index = self.X_test.index).plot(ax = axs[1, 0], title = 'Portfolio holdings')
-        pf_all_test.plot(ax = axs[1, 1], title = 'Wealth development')
+        plot_weights_over_time(holdings_test_df, legend = False, ax = axs[1, 0])
+        #pd.DataFrame(holdings_test, columns = self.pf_tickers, index = self.X_test.index).plot(ax = axs[1, 0], title = 'Portfolio holdings')
+        pf_all_test.plot(ax = axs[1, 1], title = 'Wealth development', legend = False)
         fig.suptitle(f'{self.pf_tickers} - training and test results ')
         fig.tight_layout()
 
 
     def plot_features(self):
+        '''
+        
+        Visualize the non-standardized features over time.
+
+        '''
         fig, axs = plt.subplots(2, 3, figsize = (14, 6))
         self.X_train.iloc[:, :self.n_companies].plot(ax = axs[0, 0], title = 'rolling means (train)')
         self.X_train.iloc[:, self.n_companies:2*self.n_companies].plot(ax = axs[0, 1], title = 'rolling stds (train)')
-        self.X_train.iloc[:, 2*self.n_companies:].plot(ax = axs[0, 2], title = 'rolling corr. (train)')
+        self.X_train.iloc[:, 2*self.n_companies:].plot(ax = axs[0, 2], title = 'rolling corr. (train)', cmap = 'Set2')
 
-        self.X_test.iloc[:, :self.n_companies].plot(ax = axs[1, 0], title = 'rolling means (test)')
-        self.X_test.iloc[:, self.n_companies:2*self.n_companies].plot(ax = axs[1, 1], title = 'rolling stds (test)')
-        self.X_test.iloc[:, 2*self.n_companies:].plot(ax = axs[1, 2], title = 'rolling corr. (test)')
+        self.X_test.iloc[:, :self.n_companies].plot(ax = axs[1, 0], title = 'rolling means (test)', legend = False)
+        self.X_test.iloc[:, self.n_companies:2*self.n_companies].plot(ax = axs[1, 1], title = 'rolling stds (test)', legend = False)
+        self.X_test.iloc[:, 2*self.n_companies:].plot(ax = axs[1, 2], title = 'rolling corr. (test)', cmap = 'Set2', legend = False)
         fig.tight_layout()
         return fig, axs
     
