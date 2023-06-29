@@ -775,14 +775,14 @@ class DynamicPortfolioManager:
         '''
 
         roll_mu = self.df_returns.rolling(self.rolling_window).mean()
-        roll_mu.columns = [f'mu_{ticker}' for ticker in self.pf_tickers]
+        roll_mu.columns = [fr'$\mu$({ticker})' for ticker in self.pf_tickers]
         roll_std = self.df_returns.rolling(self.rolling_window).std()
-        roll_std.columns = [f'sigma_{ticker}' for ticker in self.pf_tickers]
+        roll_std.columns = [fr'$\sigma$({ticker})' for ticker in self.pf_tickers]
         roll_corr = self.df_returns.rolling(self.rolling_window).corr()
         cols = []
         i_idx, j_idx = np.tril_indices(n = self.n_companies, k = -1)
         for i, j in zip(i_idx, j_idx):
-            cols.append(f'rho_{self.pf_tickers[i]}-{self.pf_tickers[j]}')
+            cols.append(fr'$\rho$({self.pf_tickers[i]}, {self.pf_tickers[j]})')
         roll_corr_t = pd.DataFrame(columns = cols)
         for dt in roll_corr.index.get_level_values(0).unique():
             roll_corr_t.loc[dt] = roll_corr.loc[(dt, self.pf_tickers), :].values[np.tril_indices(n = self.n_companies, k = -1)]
@@ -962,7 +962,7 @@ class DynamicPortfolioManager:
         holdings_test_df = pd.DataFrame(data = holdings_test, columns = self.pf_tickers, index = self.X_test.index)
 
 
-        fig, axs = plt.subplots(2, 2, figsize = (12, 8))
+        fig, axs = plt.subplots(2, 2, figsize = (10, 6))
         plot_weights_over_time(holdings_train_df, legend = True, ax = axs[0, 0])
         #pd.DataFrame(holdings_train, columns = self.pf_tickers, index = self.X_train.index).plot(ax = axs[0, 0], title = 'Potfolio holdings')
         pf_all_train.plot(ax = axs[0, 1], title = 'Wealth development')
@@ -979,14 +979,14 @@ class DynamicPortfolioManager:
         Visualize the non-standardized features over time.
 
         '''
-        fig, axs = plt.subplots(2, 3, figsize = (14, 6))
-        self.X_train.iloc[:, :self.n_companies].plot(ax = axs[0, 0], title = 'rolling means (train)')
+        fig, axs = plt.subplots(2, 3, figsize = (10, 6))
+        self.X_train.iloc[:, :self.n_companies].plot(ax = axs[0, 0], title = r'rolling means (train)')
         self.X_train.iloc[:, self.n_companies:2*self.n_companies].plot(ax = axs[0, 1], title = 'rolling stds (train)')
-        self.X_train.iloc[:, 2*self.n_companies:].plot(ax = axs[0, 2], title = 'rolling corr. (train)', cmap = 'Set2')
+        self.X_train.iloc[:, 2*self.n_companies:].plot(ax = axs[0, 2], title = 'rolling correlation (train)', cmap = 'Set2')
 
         self.X_test.iloc[:, :self.n_companies].plot(ax = axs[1, 0], title = 'rolling means (test)', legend = False)
         self.X_test.iloc[:, self.n_companies:2*self.n_companies].plot(ax = axs[1, 1], title = 'rolling stds (test)', legend = False)
-        self.X_test.iloc[:, 2*self.n_companies:].plot(ax = axs[1, 2], title = 'rolling corr. (test)', cmap = 'Set2', legend = False)
+        self.X_test.iloc[:, 2*self.n_companies:].plot(ax = axs[1, 2], title = 'rolling correlation (test)', cmap = 'Set2', legend = False)
         fig.tight_layout()
         return fig, axs
     
